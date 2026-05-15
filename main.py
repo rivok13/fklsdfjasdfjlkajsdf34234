@@ -498,7 +498,7 @@ async def del_all_group(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
-# ---------- ПЛАНИРОВЩИК УВЕДОМЛЕНИЙ ----------
+# ---------- ПЛАНИРОВЩИК УВЕДОМЛЕНИЙ (одно уведомление за 5 минут до начала) ----------
 sent_notifications = set()
 
 async def scheduler():
@@ -509,36 +509,45 @@ async def scheduler():
         today = now.strftime("%Y-%m-%d")
         current_time = now.strftime("%H:%M")
 
+        # Очистка множества при смене дня
         if hasattr(scheduler, 'last_date') and scheduler.last_date != today:
             sent_notifications.clear()
         scheduler.last_date = today
 
         async with aiosqlite.connect(DB_NAME) as db:
+            # Получаем все занятия на сегодня
             cursor = await db.execute(
-                "SELECT chat_id, date, start_time, end_time, subject, teacher, link FROM schedule WHERE date = ? AND start_time = ?",
-                (today, current_time)
+                "SELECT chat_id, date, start_time, end_time, subject, teacher, link FROM schedule WHERE date = ?",
+                (today,)
             )
             rows = await cursor.fetchall()
             for chat_id, date, start, end, subject, teacher, link in rows:
-                notification_key = (chat_id, date, start)
-                if notification_key in sent_notifications:
-                    continue
-                sent_notifications.add(notification_key)
-
-                text = (
-                    "🔔 Напоминание! Необходимо подключиться\n\n"
-                    f"Предмет: {subject}\n"
-                    f"Преподаватель: {teacher}\n\n"
-                    f"⌛️ Продолжительность {start} – {end} МСК"
-                )
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔗 Подключиться", url=link)]
-                ])
+                # Вычисляем время напоминания: start_time минус 5 минут
                 try:
-                    await bot.send_message(chat_id, text, reply_markup=kb)
-                    logging.info(f"Уведомление: {subject} -> {chat_id}")
-                except Exception as e:
-                    logging.error(f"Ошибка отправки в {chat_id}: {e}")
+                    start_h, start_m = map(int, start.split(":"))
+                    reminder_dt = datetime(2000, 1, 1, start_h, start_m) - timedelta(minutes=5)
+                    reminder_time = reminder_dt.strftime("%H:%M")
+                except:
+                    continue
+
+                if current_time == reminder_time:
+                    key = (chat_id, date, start)
+                    if key not in sent_notifications:
+                        sent_notifications.add(key)
+                        text = (
+                            "🔔 Напоминание! Необходимо подключиться\n\n"
+                            f"Предмет: {subject}\n"
+                            f"Преподаватель: {teacher}\n\n"
+                            f"⌛️ Продолжительность {start} – {end} МСК"
+                        )
+                        kb = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="🔗 Подключиться", url=link)]
+                        ])
+                        try:
+                            await bot.send_message(chat_id, text, reply_markup=kb)
+                            logging.info(f"Уведомление за 5 мин: {subject} -> {chat_id}")
+                        except Exception as e:
+                            logging.error(f"Ошибка отправки в {chat_id}: {e}")
 
 # ---------- ЗАПУСК ----------
 async def main():
