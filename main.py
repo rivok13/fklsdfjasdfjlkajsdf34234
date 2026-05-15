@@ -132,6 +132,25 @@ async def delete_schedule(chat_id: int, date: str = None):
             await db.execute("DELETE FROM schedule WHERE chat_id = ?", (chat_id,))
         await db.commit()
 
+async def get_all_chat_members_from_api(chat_id: int):
+    """Получает ВСЕХ участников чата через Telegram API (бот должен быть админом)."""
+    members = []
+    offset = 0
+    limit = 200
+    while True:
+        chunk = await bot.get_chat_members(chat_id, offset=offset, limit=limit)
+        if not chunk:
+            break
+        for member in chunk:
+            user = member.user
+            # Игнорируем ботов и удалённые аккаунты, если нужно (можно оставить)
+            if not user.is_bot:
+                members.append((user.id, user.username, user.first_name))
+        offset += limit
+        if len(chunk) < limit:
+            break
+    return members
+
 # ---------- СОСТОЯНИЯ FSM ----------
 class AddSchedule(StatesGroup):
     choosing_group = State()
@@ -264,9 +283,11 @@ async def track_chat_and_member(message: types.Message):
 async def cmd_call(message: types.Message):
     chat_id = message.chat.id
     text = message.text[6:].strip()
-    members = await get_chat_members(chat_id)
+
+    # Получаем ВСЕХ участников чата через API
+    members = await get_all_chat_members_from_api(chat_id)
     if not members:
-        await message.reply("❌ Нет данных об участниках.")
+        await message.reply("❌ Не удалось получить список участников.")
         return
 
     try:
